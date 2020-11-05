@@ -30,7 +30,7 @@ document.getElementById("my-file-input").addEventListener("change", function(eve
         zoom : true, // Sets viewing bounds after parse
         afterParse: functionToCallAfterParse, // Function to call when parse is complete
     });
-    let file = this.files[0];
+    let file = event.target.files[0];
     let fileURL = URL.createObjectURL(file);
     geoXML.parse(fileURL);
 });
