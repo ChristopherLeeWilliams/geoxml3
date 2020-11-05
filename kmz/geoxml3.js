@@ -474,6 +474,129 @@ function processStyleUrl(node) {
     return coordListA;
   }
 
+  // --------------------------------------- Added Functions ---------------------------------------
+
+    /*
+        Checks to see if the rectangle is upright
+        Coordinates are in order:
+          Bottom-left, Bottom-right, Top-right, Top-left, Bottom-Left (closure)
+        And "Bottom" coordinates have latitudes less than "Top" Coordinates
+      */
+     var coordsAreUpright = function(coords) {
+      let bottomLatMax = Math.max(coords[0].lat(), coords[1].lat());
+      let topLatMin = Math.min(coords[2].lat(), coords[3].lat());
+      return bottomLatMax < topLatMin;
+    }
+
+    var generateLatLonBox = function(coords, rotation) {
+      let bounds = new google.maps.LatLngBounds();
+      coords.forEach((coord) => bounds.extend(coord));
+      let latLonBox = {
+        north: bounds.getNorthEast().lat(),
+        south: bounds.getSouthWest().lat(),
+        east: bounds.getNorthEast().lng(),
+        west: bounds.getSouthWest().lng(),
+        rotation: rotation
+      };
+      return latLonBox;
+    }
+
+    var getBoundsCenter = function(coords) {
+      let bounds = new google.maps.LatLngBounds();
+      coords.forEach((coord) => bounds.extend(coord));
+      return bounds.getCenter();
+    }
+
+    /*
+        Convert the String Contents of a LatLonQuad Element(incompatible with Google Maps)
+        to a LatLonBox Element, which is compatible with Google Maps
+        Rotation is supported through GeoXML3
+
+        LatLonQuadString received should have format: 
+        -123.21384002,44.46592816 -123.20642531,44.46594180 -123.20648053,44.48160380 -123.21389723,44.48159016
+
+        From Element:
+        <gx:LatLonQuad>
+            <coordinates>
+                -123.21384002,44.46592816 -123.20642531,44.46594180 -123.20648053,44.48160380 -123.21389723,44.48159016
+            </coordinates>
+        </gx:LatLonQuad>
+      */
+     var latLonQuadtoLatLonBox = function(latLonQuadString) {
+      // Parse and split string to convert it into an array of google LatLng Coords
+      let parsedString = latLonQuadString.split(" ");
+      let before = parsedString.map((lonLatPair) => {
+        let split = lonLatPair.split(",");
+        let lat = parseFloat(split[1]);
+        let lng = parseFloat(split[0]);
+        return new google.maps.LatLng(lat, lng)
+      });
+
+      // Add closing lat,lng coordinate if missing
+      if((before[0].lat() != before[before.length-1].lat()) ||
+          before[0].lng() != before[before.length-1].lng()) {
+            before.push(new google.maps.LatLng(before[0].lat(), before[0].lng()));
+      }
+
+      // If bottom left and bottom right lats are already nearly equal, generate and return LatLonBox
+      if (coordsAreUpright(before) && latsEqual(before)) { return generateLatLonBox(before, 0); }
+
+      // Find rotation needed for bottom left and bottom right lats to be nearly equal
+      let rotationDegree = .01;
+      let totalRotation = 0;
+      while(true) {
+        let after = rotateCoords(before, rotationDegree);
+        totalRotation += rotationDegree;
+        if (coordsAreUpright(after)) {
+          if (latsEqual(after)) { return generateLatLonBox(after, totalRotation); }
+          if (latsPassed(before, after)) { rotationDegree = rotationDegree * -.5; }
+        }
+        before = after;
+      }
+    }
+
+    /*
+      Checks to see if the latitudes from the first two coordinates (bottom-left and bottom-right)
+      are equal (or within a certain threshold). Indicating the rectangle is leveled (not rotated)
+    */
+    var latsEqual = function(coords) {
+      return (Math.abs(coords[1].lat() - coords[0].lat()) < .00000000000000001);
+    }
+
+    /*
+      Checks to see if the rotation applied to the rectangle (after) has caused it to go past the point
+      where it was level (first two lats are equal)
+    */
+    var latsPassed = function(before, after) {
+      let diffBefore = before[1].lat() - before[0].lat();
+      let diffAfter = after[1].lat() - after[0].lat();
+      if (diffBefore < 0) {
+        return (diffAfter > 0)? true : false;
+      } else {
+        return (diffAfter < 0)? true : false;
+      }
+    }
+
+    var rotateCoords = function(coords, angle) {
+      var prj = map.getProjection();
+      let origin = prj.fromLatLngToPoint(getBoundsCenter(coords));
+      var coords = coords.map(function(latLng){
+        var point = prj.fromLatLngToPoint(latLng);
+        var rotatedLatLng =  prj.fromPointToLatLng(rotatePoint(point,origin,angle));
+        return new google.maps.LatLng(rotatedLatLng.lat(), rotatedLatLng.lng())
+      });
+      return coords;
+    }
+
+    var rotatePoint = function(point, origin, angle) {
+      var angleRad = angle * Math.PI / 180.0;
+      return {
+          x: Math.cos(angleRad) * (point.x - origin.x) - Math.sin(angleRad) * (point.y - origin.y) + origin.x,
+          y: Math.sin(angleRad) * (point.x - origin.x) + Math.cos(angleRad) * (point.y - origin.y) + origin.y
+      };
+    }
+    // ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
   var render = function (responseXML, doc) {
     // Callback for retrieving a KML document: parse the KML and display it on the map
     if (!responseXML || responseXML == "failed parse") {
@@ -825,19 +948,46 @@ function processStyleUrl(node) {
         var gnUrl = cleanURL( doc.baseDir, nodeValue(getElementsByTagName(node, 'href')[0]) );
         if (kmzMetaData[gnUrl]) gnUrl = kmzMetaData[gnUrl].dataUrl;
 
-        // Init the ground overlay object
-        groundOverlay = {
-          name:        nodeValue(getElementsByTagName(node, 'name')[0]),
-          description: nodeValue(getElementsByTagName(node, 'description')[0]),
-          icon: { href: gnUrl },
-          latLonBox: {
-            north: parseFloat(nodeValue(getElementsByTagName(node, 'north')[0])),
-            east:  parseFloat(nodeValue(getElementsByTagName(node, 'east')[0])),
-            south: parseFloat(nodeValue(getElementsByTagName(node, 'south')[0])),
-            west:  parseFloat(nodeValue(getElementsByTagName(node, 'west')[0]))
-          },
-          rotation: -1 * parseFloat(nodeValue(getElementsByTagName(node, 'rotation')[0]))
-        };
+        // Added compatibility for Google Eart LatLonQuad Element
+        let latLonQuad;
+        try {
+          latLonQuad = nodeValue(getElementsByTagName(node, 'gx:LatLonQuad')[0]);
+        } catch (e) {
+          console.log(e);
+        }
+
+        if (!!latLonQuad) {
+          // Convert to LatLonBox before preceding
+          // Init the ground overlay object
+          let obj = latLonQuadtoLatLonBox(String(latLonQuad).trim());
+          groundOverlay = {
+            name:        nodeValue(getElementsByTagName(node, 'name')[0]),
+            description: nodeValue(getElementsByTagName(node, 'description')[0]),
+            icon: { href: gnUrl },
+            latLonBox: {
+              north: parseFloat(obj.north),
+              east:  parseFloat(obj.east),
+              south: parseFloat(obj.south),
+              west:  parseFloat(obj.west)
+            },
+            rotation: -1 * parseFloat(obj.rotation)
+          };
+        } else {
+          // Init the ground overlay object
+          groundOverlay = {
+            name:        nodeValue(getElementsByTagName(node, 'name')[0]),
+            description: nodeValue(getElementsByTagName(node, 'description')[0]),
+            icon: { href: gnUrl },
+            latLonBox: {
+              north: parseFloat(nodeValue(getElementsByTagName(node, 'north')[0])),
+              east:  parseFloat(nodeValue(getElementsByTagName(node, 'east')[0])),
+              south: parseFloat(nodeValue(getElementsByTagName(node, 'south')[0])),
+              west:  parseFloat(nodeValue(getElementsByTagName(node, 'west')[0]))
+            },
+            rotation: -1 * parseFloat(nodeValue(getElementsByTagName(node, 'rotation')[0]))
+          };
+        }
+
         if (!!google.maps) {
           doc.bounds = doc.bounds || new google.maps.LatLngBounds();
           doc.bounds.union(new google.maps.LatLngBounds(
