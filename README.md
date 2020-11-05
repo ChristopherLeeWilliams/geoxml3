@@ -21,7 +21,7 @@ Forked code from https://github.com/geocodezip/geoxml3
 <script defer src="/js/ZipFile.js"></script>
 ````
 
-3. On file input change, instantiate and initialize the geoxml object and read file
+3. On file input change, instantiate and initialize the geoxml object and read the file
 
 ````javascript
 document.getElementById("my-file-input").addEventListener("change", function(event) {
